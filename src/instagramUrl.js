@@ -1,5 +1,5 @@
 const INSTAGRAM_URL_REGEX =
-  /^https?:\/\/(www\.)?instagram\.com\/(reel|p|tv)\/[A-Za-z0-9_-]+\/?(\?.*)?$/i;
+  /^https?:\/\/(www\.)?instagram\.com\/((reel|p|tv)\/[A-Za-z0-9_-]+|stories\/[A-Za-z0-9_.]+\/\d+)\/?(\?.*)?$/i;
 
 function isValidInstagramUrl(url) {
   return typeof url === 'string' && INSTAGRAM_URL_REGEX.test(url.trim());

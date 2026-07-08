@@ -36,7 +36,9 @@ app.post('/api/download', downloadLimiter, async (req, res) => {
   const { url } = req.body || {};
 
   if (!isValidInstagramUrl(url)) {
-    return res.status(400).json({ error: 'Invalid IVD URL. Expected instagram.com/(reel|p|tv)/<id>/' });
+    return res
+      .status(400)
+      .json({ error: 'Invalid IVD URL. Expected a reel, post, tv, or story link from instagram.com.' });
   }
 
   let filePath;
