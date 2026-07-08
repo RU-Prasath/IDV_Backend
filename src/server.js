@@ -5,9 +5,11 @@ const path = require('path');
 const express = require('express');
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
+const archiver = require('archiver');
 
 const { isValidInstagramUrl } = require('./instagramUrl');
-const { downloadInstagramVideo, DownloadError, TMP_DIR } = require('./downloader');
+const { downloadInstagramMedia, DownloadError, TMP_DIR } = require('./downloader');
+const { mimeTypeFor } = require('./mime');
 
 const PORT = Number(process.env.PORT || 3000);
 
@@ -41,33 +43,68 @@ app.post('/api/download', downloadLimiter, async (req, res) => {
       .json({ error: 'Invalid IVD URL. Expected a reel, post, tv, or story link from instagram.com.' });
   }
 
-  let filePath;
+  let filePaths;
   try {
-    filePath = await downloadInstagramVideo(url.trim());
+    filePaths = await downloadInstagramMedia(url.trim());
   } catch (err) {
     const statusCode = err instanceof DownloadError ? err.statusCode : 500;
     return res.status(statusCode).json({ error: err.message });
   }
 
   const cleanup = () => {
-    fs.unlink(filePath, () => {});
+    const parentDirs = new Set();
+    for (const filePath of filePaths) {
+      fs.unlink(filePath, () => {});
+      parentDirs.add(path.dirname(filePath));
+    }
+    // gallery-dl downloads into a per-request subfolder; remove it once empty.
+    for (const dir of parentDirs) {
+      if (dir !== TMP_DIR) {
+        fs.rmdir(dir, () => {});
+      }
+    }
   };
 
-  res.setHeader('Content-Type', 'video/mp4');
-  res.setHeader('Content-Disposition', `attachment; filename="${path.basename(filePath)}"`);
+  if (filePaths.length === 1) {
+    const [filePath] = filePaths;
+    res.setHeader('Content-Type', mimeTypeFor(filePath));
+    res.setHeader('Content-Disposition', `attachment; filename="${path.basename(filePath)}"`);
 
-  const stream = fs.createReadStream(filePath);
-  stream.on('error', (err) => {
+    const stream = fs.createReadStream(filePath);
+    stream.on('error', (err) => {
+      cleanup();
+      if (!res.headersSent) {
+        res.status(500).json({ error: `Failed to stream file: ${err.message}` });
+      } else {
+        res.destroy();
+      }
+    });
+    stream.on('close', cleanup);
+
+    stream.pipe(res);
+    return;
+  }
+
+  // Carousel post: multiple slides, bundle them into a zip.
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', 'attachment; filename="ivd_carousel.zip"');
+
+  const archive = archiver('zip');
+  archive.on('error', (err) => {
     cleanup();
     if (!res.headersSent) {
-      res.status(500).json({ error: `Failed to stream file: ${err.message}` });
+      res.status(500).json({ error: `Failed to build zip: ${err.message}` });
     } else {
       res.destroy();
     }
   });
-  stream.on('close', cleanup);
+  archive.on('end', cleanup);
 
-  stream.pipe(res);
+  archive.pipe(res);
+  filePaths.forEach((filePath, index) => {
+    archive.file(filePath, { name: `${index + 1}${path.extname(filePath)}` });
+  });
+  archive.finalize();
 });
 
 app.listen(PORT, () => {
