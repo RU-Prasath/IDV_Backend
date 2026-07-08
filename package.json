@@ -1,0 +1,17 @@
+{
+  "name": "reelsaver-backend",
+  "version": "1.0.0",
+  "description": "Personal Instagram video downloader backend (wraps yt-dlp)",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.4.0"
+  }
+}
