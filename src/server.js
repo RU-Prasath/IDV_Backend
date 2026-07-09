@@ -65,46 +65,62 @@ app.post('/api/download', downloadLimiter, async (req, res) => {
     }
   };
 
-  if (filePaths.length === 1) {
-    const [filePath] = filePaths;
-    res.setHeader('Content-Type', mimeTypeFor(filePath));
-    res.setHeader('Content-Disposition', `attachment; filename="${path.basename(filePath)}"`);
+  try {
+    if (filePaths.length === 1) {
+      const [filePath] = filePaths;
+      res.setHeader('Content-Type', mimeTypeFor(filePath));
+      res.setHeader('Content-Disposition', `attachment; filename="${path.basename(filePath)}"`);
 
-    const stream = fs.createReadStream(filePath);
-    stream.on('error', (err) => {
+      const stream = fs.createReadStream(filePath);
+      stream.on('error', (err) => {
+        cleanup();
+        if (!res.headersSent) {
+          res.status(500).json({ error: `Failed to stream file: ${err.message}` });
+        } else {
+          res.destroy();
+        }
+      });
+      stream.on('close', cleanup);
+
+      stream.pipe(res);
+      return;
+    }
+
+    // Carousel post: multiple slides, bundle them into a zip.
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', 'attachment; filename="ivd_carousel.zip"');
+
+    const archive = archiver('zip');
+    archive.on('error', (err) => {
       cleanup();
       if (!res.headersSent) {
-        res.status(500).json({ error: `Failed to stream file: ${err.message}` });
+        res.status(500).json({ error: `Failed to build zip: ${err.message}` });
       } else {
         res.destroy();
       }
     });
-    stream.on('close', cleanup);
+    archive.on('end', cleanup);
 
-    stream.pipe(res);
-    return;
-  }
-
-  // Carousel post: multiple slides, bundle them into a zip.
-  res.setHeader('Content-Type', 'application/zip');
-  res.setHeader('Content-Disposition', 'attachment; filename="ivd_carousel.zip"');
-
-  const archive = archiver('zip');
-  archive.on('error', (err) => {
+    archive.pipe(res);
+    filePaths.forEach((filePath, index) => {
+      archive.file(filePath, { name: `${index + 1}${path.extname(filePath)}` });
+    });
+    archive.finalize();
+  } catch (err) {
     cleanup();
     if (!res.headersSent) {
-      res.status(500).json({ error: `Failed to build zip: ${err.message}` });
+      res.status(500).json({ error: `Failed to prepare response: ${err.message}` });
     } else {
       res.destroy();
     }
-  });
-  archive.on('end', cleanup);
+  }
+});
 
-  archive.pipe(res);
-  filePaths.forEach((filePath, index) => {
-    archive.file(filePath, { name: `${index + 1}${path.extname(filePath)}` });
-  });
-  archive.finalize();
+// A synchronous throw anywhere outside a request handler (or a bug like an
+// unexpectedly-shaped dependency) would otherwise kill the whole process;
+// log it and keep serving instead of crash-looping.
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception:', err);
 });
 
 app.listen(PORT, () => {
