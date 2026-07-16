@@ -9,6 +9,8 @@ const archiver = require('archiver');
 
 const { isValidInstagramUrl } = require('./instagramUrl');
 const { downloadInstagramMedia, DownloadError, TMP_DIR } = require('./downloader');
+const { isValidYoutubeVideoUrl } = require('./youtubeUrl');
+const { downloadYoutubeAudio, AUDIO_BITRATES } = require('./youtubeDownloader');
 const { mimeTypeFor } = require('./mime');
 
 const PORT = Number(process.env.PORT || 3000);
@@ -114,6 +116,43 @@ app.post('/api/download', downloadLimiter, async (req, res) => {
       res.destroy();
     }
   }
+});
+
+app.post('/api/youtube/audio', downloadLimiter, async (req, res) => {
+  const { url, bitrate } = req.body || {};
+  const bitrateKbps = Number(bitrate);
+
+  if (!isValidYoutubeVideoUrl(url)) {
+    return res.status(400).json({ error: 'Invalid YouTube URL.' });
+  }
+  if (!AUDIO_BITRATES.includes(bitrateKbps)) {
+    return res.status(400).json({ error: `Invalid bitrate. Choose one of: ${AUDIO_BITRATES.join(', ')} kbps` });
+  }
+
+  let filePath;
+  try {
+    filePath = await downloadYoutubeAudio(url.trim(), bitrateKbps);
+  } catch (err) {
+    const statusCode = err instanceof DownloadError ? err.statusCode : 500;
+    return res.status(statusCode).json({ error: err.message });
+  }
+
+  const cleanup = () => fs.unlink(filePath, () => {});
+
+  res.setHeader('Content-Type', 'audio/mpeg');
+  res.setHeader('Content-Disposition', `attachment; filename="${path.basename(filePath)}"`);
+
+  const stream = fs.createReadStream(filePath);
+  stream.on('error', (err) => {
+    cleanup();
+    if (!res.headersSent) {
+      res.status(500).json({ error: `Failed to stream file: ${err.message}` });
+    } else {
+      res.destroy();
+    }
+  });
+  stream.on('close', cleanup);
+  stream.pipe(res);
 });
 
 // A synchronous throw anywhere outside a request handler (or a bug like an

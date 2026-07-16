@@ -1,79 +1,17 @@
-const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const YT_DLP_PATH = process.env.YT_DLP_PATH || 'yt-dlp';
-const GALLERY_DL_PATH = process.env.GALLERY_DL_PATH || 'gallery-dl';
-const FFMPEG_PATH = process.env.FFMPEG_PATH || 'ffmpeg';
-const TMP_DIR = process.env.TMP_DIR || path.join(__dirname, '..', 'tmp');
-const DOWNLOAD_TIMEOUT_MS = Number(process.env.DOWNLOAD_TIMEOUT_MS || 60000);
-
-// yt-dlp/gallery-dl both rewrite the cookie jar in place as Instagram rotates
-// session tokens. Hosts like Render mount secret files read-only, so copy it
-// to a writable path first rather than pointing them at the original.
-const COOKIES_FILE = (() => {
-  const source = process.env.COOKIES_FILE;
-  if (!source) return undefined;
-  fs.mkdirSync(TMP_DIR, { recursive: true });
-  const writablePath = path.join(TMP_DIR, 'cookies.txt');
-  fs.copyFileSync(source, writablePath);
-  return writablePath;
-})();
-
-class DownloadError extends Error {
-  constructor(message, statusCode = 502) {
-    super(message);
-    this.statusCode = statusCode;
-  }
-}
-
-function runProcess(command, args) {
-  return new Promise((resolve, reject) => {
-    const proc = spawn(command, args, { windowsHide: true });
-
-    let stdout = '';
-    let stderr = '';
-    let timedOut = false;
-
-    const timer = setTimeout(() => {
-      timedOut = true;
-      proc.kill('SIGKILL');
-    }, DOWNLOAD_TIMEOUT_MS);
-
-    proc.stdout.on('data', (chunk) => {
-      stdout += chunk.toString();
-    });
-    proc.stderr.on('data', (chunk) => {
-      stderr += chunk.toString();
-    });
-
-    proc.on('error', (err) => {
-      clearTimeout(timer);
-      reject(new DownloadError(`Failed to start ${command}: ${err.message}`, 500));
-    });
-
-    proc.on('close', (code) => {
-      clearTimeout(timer);
-      if (timedOut) {
-        reject(new DownloadError('Download timed out', 504));
-        return;
-      }
-      resolve({ code, stdout, stderr });
-    });
-  });
-}
-
-function classifyFailure(tool, stderr) {
-  const lower = stderr.toLowerCase();
-  if (lower.includes('private') || lower.includes('login required')) {
-    return new DownloadError('This content is private or requires login', 403);
-  }
-  if (lower.includes('unavailable') || lower.includes('not found') || lower.includes('404')) {
-    return new DownloadError('Content is unavailable or the URL is invalid', 404);
-  }
-  return new DownloadError(`${tool} failed: ${stderr.trim().split('\n').pop() || 'unknown error'}`, 502);
-}
+const {
+  TMP_DIR,
+  YT_DLP_PATH,
+  GALLERY_DL_PATH,
+  FFMPEG_PATH,
+  COOKIES_FILE,
+  DownloadError,
+  runProcess,
+  classifyFailure,
+} = require('./common');
 
 /**
  * Video-only: reels, IGTV, and video posts. yt-dlp handles DASH video/audio
