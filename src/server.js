@@ -10,7 +10,7 @@ const archiver = require('archiver');
 const { isValidInstagramUrl } = require('./instagramUrl');
 const { downloadInstagramMedia, DownloadError, TMP_DIR } = require('./downloader');
 const { isValidYoutubeVideoUrl } = require('./youtubeUrl');
-const { downloadYoutubeAudio, AUDIO_BITRATES } = require('./youtubeDownloader');
+const { downloadYoutubeAudio, downloadYoutubeVideo, AUDIO_BITRATES, VIDEO_HEIGHTS } = require('./youtubeDownloader');
 const { mimeTypeFor } = require('./mime');
 
 const PORT = Number(process.env.PORT || 3000);
@@ -140,6 +140,43 @@ app.post('/api/youtube/audio', downloadLimiter, async (req, res) => {
   const cleanup = () => fs.unlink(filePath, () => {});
 
   res.setHeader('Content-Type', 'audio/mpeg');
+  res.setHeader('Content-Disposition', `attachment; filename="${path.basename(filePath)}"`);
+
+  const stream = fs.createReadStream(filePath);
+  stream.on('error', (err) => {
+    cleanup();
+    if (!res.headersSent) {
+      res.status(500).json({ error: `Failed to stream file: ${err.message}` });
+    } else {
+      res.destroy();
+    }
+  });
+  stream.on('close', cleanup);
+  stream.pipe(res);
+});
+
+app.post('/api/youtube/video', downloadLimiter, async (req, res) => {
+  const { url, quality } = req.body || {};
+  const maxHeight = Number(quality);
+
+  if (!isValidYoutubeVideoUrl(url)) {
+    return res.status(400).json({ error: 'Invalid YouTube URL.' });
+  }
+  if (!VIDEO_HEIGHTS.includes(maxHeight)) {
+    return res.status(400).json({ error: `Invalid quality. Choose one of: ${VIDEO_HEIGHTS.join(', ')}` });
+  }
+
+  let filePath;
+  try {
+    filePath = await downloadYoutubeVideo(url.trim(), maxHeight);
+  } catch (err) {
+    const statusCode = err instanceof DownloadError ? err.statusCode : 500;
+    return res.status(statusCode).json({ error: err.message });
+  }
+
+  const cleanup = () => fs.unlink(filePath, () => {});
+
+  res.setHeader('Content-Type', 'video/mp4');
   res.setHeader('Content-Disposition', `attachment; filename="${path.basename(filePath)}"`);
 
   const stream = fs.createReadStream(filePath);
