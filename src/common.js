@@ -79,6 +79,10 @@ function runProcess(command, args, { timeoutMs = DOWNLOAD_TIMEOUT_MS } = {}) {
 }
 
 function classifyFailure(tool, stderr) {
+  // Always log the raw output server-side — the classified message shown to
+  // the client is deliberately generic, but debugging needs the real reason.
+  console.error(`[${tool}] failed:\n${stderr}`);
+
   const lower = stderr.toLowerCase();
   if (lower.includes('private') || lower.includes('login required') || lower.includes('sign in')) {
     return new DownloadError('This content is private or requires login', 403);
